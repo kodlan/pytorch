@@ -1406,6 +1406,26 @@ class CurrentStreamSource(Source):
         codegen.extend_output(create_call_function(num_args, False))
         codegen.extend_output(create_call_function(1, False))
 
+    def get_value(
+        self,
+        globals: dict[str, Any],
+        locals: dict[str, Any],
+        cache: dict[Source, Any],
+        *,
+        on_error: Callable[[Source, Any, Exception], None] | None = None,
+    ) -> Any:
+        # The helper in name only exists in the guard closure, so it can't be eval'd.
+        if self in cache:
+            return cache[self]
+        try:
+            value = utils.get_current_stream(self.device)
+        except Exception as error:
+            if on_error is not None:
+                on_error(self, None, error)
+            raise
+        cache[self] = value
+        return value
+
     @property
     def guard_source(self) -> GuardSource:
         return GuardSource.GLOBAL

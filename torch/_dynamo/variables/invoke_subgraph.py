@@ -96,10 +96,12 @@ hc_log = torch._logging.getArtifactLogger(__name__, "hierarchical_compile")
 #   - guards: (source, handler, expected, guard) tuples
 #   - treespec: pytree structure of the args
 #   - traced_sources: sources accessed during the trace
+#   - stream_stack: Dynamo's symbolic stream stack at the call
 #
 # CACHE LOOKUP (is_reusable)
 # ==========================
 # On subsequent calls:
+#   0. Same symbolic stream stack as the cached call.
 #   1. Input structure match -- same treespec, tags, tensor metadata.
 #   2. Source replacement -- clone each guard's source with a replacement map
 #      (old: L['self'].layers[0].weight -> new: L['self'].layers[1].weight),
@@ -629,6 +631,7 @@ def build_reuse_condition(
         guards=guard_tuples,
         treespec=fingerprint.treespec,
         traced_sources=traced_sources,
+        stream_stack=tx.symbolic_stream_state.stack_key(),
     )
 
 
@@ -676,6 +679,10 @@ def is_reusable(
     (3) Build a source replacement mapping (old sources → new sources) and
         re-evaluate the snapshotted guards under the new sources.
     """
+    if condition.stream_stack != tx.symbolic_stream_state.stack_key():
+        hc_log.debug("subgraph_reuse: reuse failed -- current stream mismatch")
+        return False
+
     # Structural check: treespec must match first.
     if condition.treespec is not None and (
         fingerprint.treespec is None

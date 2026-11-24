@@ -1072,6 +1072,11 @@ def are_same_graph_modules(
         if a_node.op != b_node.op:
             return False
 
+        # The stream annotation decides which stream a node runs on.
+        a_stream = a_node.meta.get("custom", {}).get("stream")
+        if a_stream != b_node.meta.get("custom", {}).get("stream"):
+            return False
+
         if a_node.op == "placeholder":
             a_value = a_node.meta["example_value"]
             b_value = b_node.meta["example_value"]

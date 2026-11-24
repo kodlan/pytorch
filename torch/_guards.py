@@ -857,6 +857,10 @@ class InvokeSubgraphReuseCondition:
     # of these to detect mutations on captured variables.
     traced_sources: OrderedSet[Source] = dataclasses.field(default_factory=OrderedSet)
 
+    # SymbolicStreamState.stack_key() at the call. The traced body hard-wires
+    # the streams it ran under, so a cache hit needs the same stack.
+    stream_stack: tuple[int | None, ...] = ()
+
 
 class InvokeSubgraphCache(HopSubgraphCache):
     def __init__(self) -> None:

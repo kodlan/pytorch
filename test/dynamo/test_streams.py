@@ -48,6 +48,12 @@ def print_graph(graph: torch.fx.GraphModule) -> str:
     return remove_file_comment(graph.print_readable(print_output=False))
 
 
+def count_region_traces():
+    hop = torch._dynamo.variables.higher_order_ops
+    name = "speculate_subgraph_with_auto_output_flattening"
+    return patch.object(hop, name, wraps=getattr(hop, name))
+
+
 def strip_annotation_desc(gm_str: str) -> str:
     """Strip the stack-trace description off "# Annotation: {...}" lines.
 
@@ -1195,6 +1201,68 @@ class <lambda>(torch.nn.Module):
             return x + 1
 
         fn(torch.ones(2, 2, device=device))
+
+    def test_current_stream_in_nested_compile_region(self, device):
+        # https://github.com/pytorch/pytorch/issues/205703
+        @torch.compiler.nested_compile_region
+        def region(x):
+            torch.accelerator.current_stream(device).synchronize()
+            return x + 1
+
+        def fn(x):
+            return region(x) + region(x * 2)
+
+        x = torch.ones(2, 2, device=device)
+        with count_region_traces() as traces:
+            out = torch.compile(fn, backend="eager", fullgraph=True)(x)
+        self.assertEqual(out, fn(x))
+        self.assertEqual(traces.call_count, 1)
+
+    @parametrize("side_first", (False, True))
+    def test_nested_compile_region_not_reused_across_streams(self, device, side_first):
+        s = torch.Stream(device=device)
+
+        @torch.compiler.nested_compile_region
+        def region(x):
+            if torch.accelerator.current_stream(device) == s:
+                return x + 100
+            return x + 1
+
+        def fn(x):
+            out = []
+            for on_side in (side_first, not side_first, side_first):
+                if on_side:
+                    with s:
+                        out.append(region(x))
+                else:
+                    out.append(region(x))
+            return out
+
+        x = torch.ones(2, 2, device=device)
+        with count_region_traces() as traces:
+            out = torch.compile(fn, backend="eager", fullgraph=True)(x)
+        self.assertEqual(out, fn(x))
+        # The third call is under the first call's stream and reuses its body.
+        self.assertEqual(traces.call_count, 2)
+
+    def test_nested_compile_region_body_not_shared_across_streams(self, device):
+        s = torch.Stream(device=device)
+
+        @torch.compiler.nested_compile_region
+        def region(x):
+            return x + 1
+
+        def fn(x):
+            with s:
+                a = region(x)
+            return a, region(x)
+
+        backend = torch._dynamo.testing.EagerAndRecordGraphs()
+        x = torch.ones(2, 2, device=device)
+        out = torch.compile(fn, backend=backend, fullgraph=True)(x)
+        self.assertEqual(out, fn(x))
+        # Body nodes are annotated with the stream they were traced under.
+        self.assertEqual(len(list(backend.graphs[0].named_children())), 2)
 
     def test_stream_with_mutation(self, device):
         def fn(x, y):

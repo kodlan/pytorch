@@ -366,6 +366,9 @@ class SymbolicStreamState:
     def in_stream_context(self) -> bool:
         return len(self.cur_stream_stack) > 0
 
+    def stack_key(self) -> tuple[int | None, ...]:
+        return tuple(s.user_object_index for s in self.cur_stream_stack)
+
     def cur_stream_id(self) -> int:
         """Get a Python object id for the current stream without realizing lazy variables."""
         stream = self.cur_stream_stack[-1]
